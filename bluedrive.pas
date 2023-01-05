@@ -35,7 +35,8 @@ type
     hp, team: byte;
   end;
   pactor = ^actor;
-  emode = (mode_look, mode_move);
+  emode = (mode_look, mode_move, mode_fire);
+  tfmap = array[0..3999] of boolean;
 
 var
   mapw, maph: integer;
@@ -162,8 +163,62 @@ begin
     end;
 end;
 
-procedure doAITurn(t: byte);
+function shootActor(i: integer): boolean;
 begin
+  actors[i].hp := actors[i].hp - 1;
+  if actors[i].hp > 0 then begin shootActor := false; exit; end;
+  actors[i].hp := actors[nactors].hp;
+  actors[i].x := actors[nactors].x;
+  actors[i].y := actors[nactors].y;
+  actors[i].moved := actors[nactors].moved;
+  actors[i].fired := actors[nactors].fired;
+  nactors := nactors-1;
+  shootActor := true;
+end;
+
+function visibleEnemy(x, y: integer; t: byte): integer;
+var
+  i: integer;
+begin
+  for i := 1 to nactors do begin
+    if actors[i].team = t then continue;
+    if not sees(x, y, actors[i].x, actors[i].y) then continue;
+    visibleEnemy := i;
+    exit;
+  end;
+  visibleEnemy := 0;
+end;
+
+procedure tryFire(i: integer);
+var
+  j: integer;
+begin
+  if actors[i].fired then exit;
+  j := visibleEnemy(actors[i].x, actors[i].y, actors[i].team);
+  if j = 0 then exit;
+  shootActor(j);
+end;
+
+procedure doAITurn(t: byte);
+var
+  i: integer;
+  targets: array[1..100] of pactor;
+  ntargets: integer;
+begin
+  getTeamFOV(t);
+
+  ntargets := 0;
+  for i := 1 to nactors do
+    if (actors[i].team <> t) and FOVMap[actors[i].y*mapw+actors[i].x]
+    then begin
+      ntargets := ntargets + 1;
+      targets[ntargets] := @actors[i];
+    end;
+
+  for i := 1 to nactors do begin
+    if actors[i].team <> t then continue;
+    tryFire(i);
+  end;
 end;
 
 procedure draw;
@@ -242,6 +297,18 @@ begin
       if FOVMap[cursorY*mapw+cursorX] then write('m) move ');
       write('c) cancel ');
     end;
+
+    mode_fire: begin
+      gotoxy(sidebarX, sidebarY);
+      i := actorAt(cursorX, cursorY);
+      if i <> 0 then
+        if (actors[i].team <> playerTeam)
+            and sees(actors[selected].x, actors[selected].y,
+                     actors[i].x, actors[i].y)
+        then
+          write('f) fire ');
+      write('c) cancel ');
+    end;
   end;
 
   gotoxy(cursorX+xo, cursorY+yo);
@@ -266,7 +333,7 @@ begin
     end;
     { quit }
     'q': control := true;
-    { control unit }
+    { move }
     'm': if mode = mode_look then begin
       i := actorAt(cursorX, cursorY);
       if i = 0 then exit;
@@ -276,13 +343,30 @@ begin
       mode := mode_move;
       getActorMov(@actors[selected]);
     end else if mode = mode_move then begin
-      if FOVMap[cursorY*mapw+cursorX] then begin
-        actors[selected].x := cursorX;
-        actors[selected].y := cursorY;
-        actors[selected].moved := true;
-        getTeamFOV(playerTeam);
-        mode := mode_look;
-      end;
+      if not FOVMap[cursorY*mapw+cursorX] then exit;
+      actors[selected].x := cursorX;
+      actors[selected].y := cursorY;
+      actors[selected].moved := true;
+      getTeamFOV(playerTeam);
+      mode := mode_look;
+    end;
+    { fire }
+    'f': if mode = mode_look then begin
+      i := actorAt(cursorX, cursorY);
+      if i = 0 then exit;
+      if actors[i].team <> playerTeam then exit;
+      if actors[i].fired then exit;
+      selected := i;
+      mode := mode_fire;
+    end else if mode = mode_fire then begin
+      i := actorAt(cursorX, cursorY);
+      if i = 0 then exit;
+      if actors[i].team = playerTeam then exit;
+      if not sees(actors[selected].x, actors[selected].y,
+                  actors[i].x, actors[i].y) then exit;
+      shootActor(i);
+      actors[selected].fired := true;
+      mode := mode_look;
     end;
     { cancel }
     'c': begin getTeamFOV(playerTeam); mode := mode_look; end;
@@ -291,6 +375,7 @@ begin
       turn := turn + 1;
       readyTeam(enemyTeam);
       doAITurn(enemyTeam);
+      getTeamFOV(playerTeam);
       readyTeam(playerTeam);
     end;
   end;
@@ -298,7 +383,7 @@ end;
 
 begin
   loadMap(map1w, map1h, map1);
-  getTeamFov(1);
+  getTeamFOV(playerTeam);
   while true do begin
     draw;
     if control then break;
