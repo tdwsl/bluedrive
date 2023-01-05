@@ -48,6 +48,7 @@ var
   turn: integer;
   mode: emode;
   selected: integer;
+  pathMap: array[0..3999] of integer;
 
 procedure addActor(x, y: integer; team: byte);
 begin
@@ -176,6 +177,75 @@ begin
   shootActor := true;
 end;
 
+procedure generatePath(x1, y1: integer);
+const
+  dirs: array[0..7] of integer = (
+    0, -1,
+    1, 0,
+    0, 1,
+    -1, 0
+  );
+var
+  i, j, g, x, y: integer;
+  f: boolean;
+begin
+  for i := 0 to mapw*maph-1 do
+    if map[i] = 1 then pathMap[i] := -1 else pathMap[i] := 0;
+
+  pathMap[y1*mapw+x1] := 1;
+
+  g := 1;
+  while true do begin
+    f := false;
+    for i := 0 to mapw*maph-1 do
+      if pathMap[i] = g then begin
+        f := true;
+        for j := 0 to 3 do begin
+          x := i mod mapw + dirs[j*2];
+          y := i div mapw + dirs[j*2+1];
+          if (x < 0) or (y < 0) or (x >= mapw) or (y >= maph) then continue;
+          pathMap[y*mapw+x] := g+1;
+        end;
+      end;
+    if not f then break;
+    g := g + 1;
+  end;
+end;
+
+function walkDistance(x1, y1, x2, y2: integer): integer;
+begin
+  generatePath(x2, y2);
+  walkDistance := pathMap[y1*mapw+x1];
+end;
+
+procedure moveTo(ap: pactor; x1, y1: integer);
+var
+  i, d, x, y: integer;
+begin
+  if ap^.moved then exit;
+
+  getActorMov(ap);
+
+  generatePath(x1, y1);
+  x := ap^.x;
+  y := ap^.y;
+  d := pathMap[y*mapw+x];
+
+  for i := 0 to mapw*maph-1 do
+    if (pathMap[i] < d) and FOVMap[i] then begin
+      if actorAt(i mod mapw, i div mapw) <> 0 then continue;
+      d := pathMap[i];
+      x := i mod mapw;
+      y := i div mapw;
+    end;
+
+  if (x = ap^.x) and (y = ap^.y) then exit;
+
+  ap^.x := x;
+  ap^.y := y;
+  ap^.moved := true;
+end;
+
 function visibleEnemy(x, y: integer; t: byte): integer;
 var
   i: integer;
@@ -201,22 +271,35 @@ end;
 
 procedure doAITurn(t: byte);
 var
-  i: integer;
+  i, j, c: integer;
   targets: array[1..100] of pactor;
   ntargets: integer;
 begin
-  getTeamFOV(t);
-
-  ntargets := 0;
-  for i := 1 to nactors do
-    if (actors[i].team <> t) and FOVMap[actors[i].y*mapw+actors[i].x]
-    then begin
-      ntargets := ntargets + 1;
-      targets[ntargets] := @actors[i];
-    end;
-
   for i := 1 to nactors do begin
     if actors[i].team <> t then continue;
+
+    tryFire(i);
+    if actors[i].fired then continue;
+
+    getTeamFOV(t);
+    ntargets := 0;
+    for j := 1 to nactors do
+      if (actors[j].team <> t) and FOVMap[actors[j].y*mapw+actors[j].x]
+      then begin
+        ntargets := ntargets + 1;
+        targets[ntargets] := @actors[j];
+      end;
+    if ntargets = 0 then continue;
+
+    c := 1;
+    for j := 2 to ntargets do
+      if walkDistance(actors[i].x, actors[i].y, targets[j]^.x, targets[j]^.y)
+          < walkDistance(actors[c].x, actors[c].y,
+                         targets[j]^.x, targets[j]^.y)
+      then c := j;
+
+    moveTo(@actors[i], targets[c]^.x, targets[c]^.y);
+
     tryFire(i);
   end;
 end;
