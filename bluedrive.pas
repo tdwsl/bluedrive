@@ -14,7 +14,7 @@ const
     1,3,3,3,3,1,0,0,0,0,1,0,0,0,1,
     1,0,0,0,0,1,0,0,4,4,1,2,1,1,1,
     1,0,0,0,0,1,0,0,0,0,1,0,0,0,1,
-    1,2,1,1,2,1,1,2,2,1,1,1,0,0,1,
+    1,2,1,1,0,1,1,2,2,1,1,1,0,0,1,
     1,0,0,0,0,0,0,0,0,2,0,0,0,4,1,
     1,2,1,1,2,1,1,0,0,1,1,2,1,1,1,
     1,0,0,4,0,0,2,0,0,2,0,0,0,0,1,
@@ -23,18 +23,19 @@ const
 
   maxHP = 3;
   playerTeam = 1;
+  enemyTeam = 2;
   sidebarX = 51;
-  sidebarY = 3;
+  sidebarY = 5;
   sidebarTopY = 1;
-  defAP = 16;
 
 type
   actor = record
     x, y: integer;
-    hp, ap: byte;
-    team: byte;
+    moved, fired: boolean;
+    hp, team: byte;
   end;
   pactor = ^actor;
+  emode = (mode_look, mode_move);
 
 var
   mapw, maph: integer;
@@ -44,6 +45,8 @@ var
   nactors: integer;
   cursorX, cursorY: integer;
   turn: integer;
+  mode: emode;
+  selected: integer;
 
 procedure addActor(x, y: integer; team: byte);
 begin
@@ -52,7 +55,8 @@ begin
   actors[nactors].y := y;
   actors[nactors].team := team;
   actors[nactors].hp := maxHP;
-  actors[nactors].ap := defAP;
+  actors[nactors].moved := false;
+  actors[nactors].fired := false;
 end;
 
 procedure loadMap(w, h: integer; m: array of byte);
@@ -65,6 +69,7 @@ begin
   cursorY := 0;
   nactors := 0;
   turn := 1;
+  mode := mode_look;
   for i := 0 to w*h-1 do begin
     map[i] := m[i];
     if (m[i] = 3) or (m[i] = 4) then begin
@@ -85,6 +90,8 @@ begin
   if xd < 0 then d := xd*-1 else d := xd;
   if yd > d then d := yd
   else if yd*-1 > d then d := yd*-1;
+
+  if d = 0 then begin sees := true; exit; end;
 
   for i := 1 to d do begin
     x := x1 + (xd*i) div d;
@@ -127,15 +134,54 @@ begin
   actorAt := 0;
 end;
 
+procedure getActorMov(a: pactor);
+var
+  i, xd, yd: integer;
+begin
+  for i := 0 to mapw*maph-1 do
+    FOVMap[i] := false;
+
+  for i := 0 to mapw*maph-1 do begin
+    if map[i] = 1 then continue;
+    if actorAt(i mod mapw, i div mapw) <> 0 then continue;
+    xd := i mod mapw - a^.x;
+    yd := i div mapw - a^.y;
+    if xd*xd+yd*yd > 4*4 then continue;
+    FOVMap[i] := sees(a^.x, a^.y, i mod mapw, i div mapw);
+  end;
+end;
+
+procedure readyTeam(t: byte);
+var
+  i: integer;
+begin
+  for i := 1 to nactors do
+    if actors[i].team = t then begin
+      actors[i].moved := false;
+      actors[i].fired := false;
+    end;
+end;
+
+procedure doAITurn(t: byte);
+begin
+end;
+
 procedure draw;
+const
+  xo = 1;
+  yo = 2;
 var
   i: integer;
 begin
   clrscr;
 
+  gotoxy(1, 1);
+  write('B L U E  D R I V E');
+
   { draw map }
   for i := 0 to mapw*maph-1 do begin
-    gotoxy(i mod mapw + 1, i div mapw + 1);
+    gotoxy(i mod mapw + xo, i div mapw + yo);
+    if (mode = mode_move) and FOVMap[i] then begin write('*'); continue; end;
     case map[i] of
       0: if FOVMap[i] then write('.') else write(' ');
       1: write('#');
@@ -146,46 +192,64 @@ begin
   { draw actors }
   for i := 1 to nactors do
     if FOVMap[actors[i].y*mapw+actors[i].x] then begin
-      gotoxy(actors[i].x+1, actors[i].y+1);
+      gotoxy(actors[i].x+xo, actors[i].y+yo);
       if actors[i].team = playerTeam then write('D')
       else write('d');
     end;
 
   gotoxy(sidebarX, sidebarTopY);
   write('Turn: ', turn);
+  gotoxy(sidebarX, sidebarTopY+2);
+  write('d) end turn q) quit');
 
-  i := actorAt(cursorX, cursorY);
-  gotoxy(sidebarX, sidebarY);
-  write('(', cursorX, ',', cursorY, ') ');
+  case mode of
+    mode_look: begin
+      i := actorAt(cursorX, cursorY);
+      gotoxy(sidebarX, sidebarY);
+      write('(', cursorX, ',', cursorY, ') ');
 
-  if (i <> 0) and FOVMap[cursorY*mapw+cursorX] then begin
-    gotoxy(sidebarX, sidebarY+1);
-    if actors[i].team = playerTeam then write('Player Unit')
-    else write('Enemy unit');
-    gotoxy(sidebarX, sidebarY+2);
-    write('Team: ', actors[i].team);
-    gotoxy(sidebarX, sidebarY+3);
-    write('HP: ', actors[i].hp, '/', maxHP);
-    if actors[i].team = playerTeam then begin
-      gotoxy(sidebarX, sidebarY+3);
-      write('AP: ', actors[i].ap, '/', defAP);
+      if (i <> 0) and FOVMap[cursorY*mapw+cursorX] then begin
+        gotoxy(sidebarX, sidebarY+1);
+        if actors[i].team = playerTeam then write('Player Unit')
+        else write('Enemy unit');
+        gotoxy(sidebarX, sidebarY+2);
+        write('Team: ', actors[i].team);
+        gotoxy(sidebarX, sidebarY+3);
+        write('HP: ', actors[i].hp, '/', maxHP);
+        if actors[i].team = playerTeam then begin
+          gotoxy(sidebarX, sidebarY+5);
+          if not actors[i].moved then write('m) move ');
+          if not actors[i].fired then write('f) fire ');
+        end;
+
+      end else begin
+        gotoxy(sidebarX, sidebarY+1);
+        case map[cursorY*mapw+cursorX] of
+          0: write('Floor');
+          1: write('Wall');
+          2: write('Door');
+        end;
+        if FOVMap[cursorY*mapw+cursorX] then write(' (visible)')
+        else write(' (not visible)');
+      end;
     end;
 
-  end else begin
-    gotoxy(sidebarX, sidebarY+1);
-    case map[cursorY*mapw+cursorX] of
-      0: write('Floor');
-      1: write('Wall');
-      2: write('Door');
+    mode_move: begin
+      gotoxy(actors[selected].x+xo, actors[selected].y+yo);
+      write('D');
+
+      gotoxy(sidebarX, sidebarY);
+      if FOVMap[cursorY*mapw+cursorX] then write('m) move ');
+      write('c) cancel ');
     end;
-    if FOVMap[cursorY*mapw+cursorX] then write(' (visible)')
-    else write(' (not visible)');
   end;
 
-  gotoxy(cursorX+1, cursorY+1);
+  gotoxy(cursorX+xo, cursorY+yo);
 end;
 
 function control: boolean;
+var
+  i: integer;
 begin
   control := false;
   case readkey of
@@ -194,8 +258,41 @@ begin
     'j': if cursorY < maph-1 then cursorY := cursorY + 1;
     'k': if cursorY > 0 then cursorY := cursorY - 1;
     'l': if cursorX < mapw-1 then cursorX := cursorX + 1;
+    #0: case readkey of
+      #75: if cursorX > 0 then cursorX := cursorX - 1;
+      #80: if cursorY < maph-1 then cursorY := cursorY + 1;
+      #72: if cursorY > 0 then cursorY := cursorY - 1;
+      #77: if cursorX < mapw-1 then cursorX := cursorX + 1;
+    end;
     { quit }
     'q': control := true;
+    { control unit }
+    'm': if mode = mode_look then begin
+      i := actorAt(cursorX, cursorY);
+      if i = 0 then exit;
+      if actors[i].team <> playerTeam then exit;
+      if actors[i].moved then exit;
+      selected := i;
+      mode := mode_move;
+      getActorMov(@actors[selected]);
+    end else if mode = mode_move then begin
+      if FOVMap[cursorY*mapw+cursorX] then begin
+        actors[selected].x := cursorX;
+        actors[selected].y := cursorY;
+        actors[selected].moved := true;
+        getTeamFOV(playerTeam);
+        mode := mode_look;
+      end;
+    end;
+    { cancel }
+    'c': begin getTeamFOV(playerTeam); mode := mode_look; end;
+    { end turn }
+    'd': begin
+      turn := turn + 1;
+      readyTeam(enemyTeam);
+      doAITurn(enemyTeam);
+      readyTeam(playerTeam);
+    end;
   end;
 end;
 
@@ -206,5 +303,6 @@ begin
     draw;
     if control then break;
   end;
+  clrscr;
 end.
 
