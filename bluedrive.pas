@@ -35,7 +35,7 @@ type
     hp, team: byte;
   end;
   pactor = ^actor;
-  emode = (mode_look, mode_move, mode_fire);
+  emode = (mode_look, mode_move, mode_fire, mode_lose, mode_win);
   tfmap = array[0..3999] of boolean;
 
 var
@@ -173,6 +173,7 @@ begin
   actors[i].y := actors[nactors].y;
   actors[i].moved := actors[nactors].moved;
   actors[i].fired := actors[nactors].fired;
+  actors[i].team := actors[nactors].team;
   nactors := nactors-1;
   shootActor := true;
 end;
@@ -193,9 +194,16 @@ begin
     if map[i] = 1 then pathMap[i] := -1 else pathMap[i] := 0;
 
   pathMap[y1*mapw+x1] := 1;
+  (*clrscr;
+  for i := 0 to mapw*maph-1 do begin
+    gotoxy(i mod mapw + 1, i div mapw + 1);
+    write(pathMap[i], ' ');
+  end;
+  readkey;*)
 
   g := 1;
-  while true do begin
+  f := true;
+  while f do begin
     f := false;
     for i := 0 to mapw*maph-1 do
       if pathMap[i] = g then begin
@@ -204,12 +212,19 @@ begin
           x := i mod mapw + dirs[j*2];
           y := i div mapw + dirs[j*2+1];
           if (x < 0) or (y < 0) or (x >= mapw) or (y >= maph) then continue;
-          pathMap[y*mapw+x] := g+1;
+          if pathMap[y*mapw+x] = 0 then
+            pathMap[y*mapw+x] := g+1;
         end;
       end;
-    if not f then break;
     g := g + 1;
   end;
+
+  (*clrscr;
+  for i := 0 to mapw*maph-1 do begin
+    gotoxy(i mod mapw + 1, i div mapw + 1);
+    write(pathMap[i], ' ');
+  end;
+  readkey;*)
 end;
 
 function walkDistance(x1, y1, x2, y2: integer): integer;
@@ -232,7 +247,7 @@ begin
   d := pathMap[y*mapw+x];
 
   for i := 0 to mapw*maph-1 do
-    if (pathMap[i] < d) and FOVMap[i] then begin
+    if (pathMap[i] < d) and (pathMap[i] > 0) and FOVMap[i] then begin
       if actorAt(i mod mapw, i div mapw) <> 0 then continue;
       d := pathMap[i];
       x := i mod mapw;
@@ -267,6 +282,7 @@ begin
   j := visibleEnemy(actors[i].x, actors[i].y, actors[i].team);
   if j = 0 then exit;
   shootActor(j);
+  actors[i].fired := true;
 end;
 
 procedure doAITurn(t: byte);
@@ -304,6 +320,16 @@ begin
   end;
 end;
 
+function nalive(t: byte): integer;
+var
+  i, n: integer;
+begin
+  n := 0;
+  for i := 1 to nactors do
+    if actors[i].team = t then n := n + 1;
+  nalive := n;
+end;
+
 procedure draw;
 const
   xo = 1;
@@ -314,18 +340,29 @@ begin
   clrscr;
 
   gotoxy(1, 1);
-  write('B L U E  D R I V E');
+  textcolor(yellow);
+  if mode = mode_win then write('Y O U  W I N')
+  else if mode = mode_lose then write('G A M E  O V E R')
+  else write('B L U E  D R I V E');
 
   { draw map }
   for i := 0 to mapw*maph-1 do begin
     gotoxy(i mod mapw + xo, i div mapw + yo);
-    if (mode = mode_move) and FOVMap[i] then begin write('*'); continue; end;
+    if (mode = mode_move) and FOVMap[i] then begin
+      textcolor(lightGray);
+      write('*');
+      continue;
+    end;
     case map[i] of
-      0: if FOVMap[i] then write('.') else write(' ');
-      1: write('#');
-      2: write('+');
+      0: begin
+        textcolor(darkGray);
+        if FOVMap[i] then write('.') else write(' ');
+      end;
+      1: begin textcolor(blue); write('#'); end;
+      2: begin textcolor(lightBlue); write('+'); end;
     end;
   end;
+  textcolor(lightGray);
 
   { draw actors }
   for i := 1 to nactors do
@@ -460,6 +497,9 @@ begin
       doAITurn(enemyTeam);
       getTeamFOV(playerTeam);
       readyTeam(playerTeam);
+      if nalive(enemyTeam) = 0 then mode := mode_win
+      else if nalive(playerTeam) = 0 then mode := mode_lose
+      else mode := mode_look;
     end;
   end;
 end;
